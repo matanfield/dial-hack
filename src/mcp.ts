@@ -61,6 +61,7 @@ export function buildInstruction(args: {
     `- If they sound rushed, drop the pleasantries and ask only the most important remaining questions. If they ask you to call back, ask when is better, thank them, and end.`,
     `- If you reached a wrong number, apologize briefly and end. If the person cannot answer, ask once whether someone there can; never ask the same question more than twice.`,
     `- If the main item is unavailable, drop questions that no longer apply; ask about an alternative only if it serves the goal.`,
+    `- If what the customer wants is available and they intend to come soon, ask once whether it can be held or reserved for them and until when — even if no one listed that as a question.`,
     `- Before saying goodbye, run through your agenda silently: if a question that still applies is unanswered, ask it now.`,
     `- Close clearly: if anything was agreed (a hold, a price, a time), restate it in one short sentence, thank them, and end the call. Do not read the rest of your notes back to them.`,
     ``,
@@ -99,6 +100,7 @@ export function createMcpServer(): McpServer {
         `Use it whenever the user wants something that requires phoning a business: checking if a product is in stock, hotel room or table availability, prices, opening hours, pickup or reservation details, or any quick question a call can answer.`,
         `While this connector is available the assistant CAN make real phone calls — never tell the user that making phone calls is impossible.`,
         `Flow: (1) research the business yourself first (name, phone number in E.164, relevant context) and prepare a few prioritized questions; (2) get the user's explicit approval — calls are real and cost money; (3) call place_outbound_call; (4) poll get_call_status every 60-90 seconds until the call finishes; (5) report the findings from the transcript.`,
+        `The voice agent knows ONLY what you pass in the tool inputs. Fill them richly: copy phone numbers digit-for-digit and names/titles letter-for-letter as the user wrote them, put the user's timing intentions in constraints, and give 3-5 prioritized agenda topics including practical follow-ups (price, hold for pickup, address).`,
       ].join("\n"),
     },
   );
@@ -118,7 +120,11 @@ export function createMcpServer(): McpServer {
         to: z
           .string()
           .regex(/^\+\d{7,15}$/, "Must be E.164, e.g. +972501234567")
-          .describe("Destination phone number in E.164 format, e.g. +972501234567"),
+          .describe(
+            "Destination phone number in E.164 format, e.g. +972501234567. Copy it digit-for-digit " +
+              "from the user's message or your research — never retype from memory. If the user gave a " +
+              "local number (e.g. 052-3773115), convert only the format, keeping every digit",
+          ),
         language: z
           .string()
           .regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/, "Must be a BCP-47 tag, e.g. he-IL or en-US")
@@ -138,7 +144,10 @@ export function createMcpServer(): McpServer {
           .string()
           .min(20)
           .describe(
-            "What you already know: business name, product/room/service details, prices seen online, address, hours",
+            "What you already know: business name and location, the exact product/room/service, prices seen " +
+              "online, address, hours, and any relevant history (e.g. a previous call). Spell names, brands and " +
+              "titles letter-for-letter as the user wrote them — the voice agent pronounces what is written. " +
+              "Be generous: the voice agent knows ONLY what you pass here",
           ),
         questions: z
           .array(z.string().min(5))
@@ -151,7 +160,10 @@ export function createMcpServer(): McpServer {
         constraints: z
           .string()
           .optional()
-          .describe("Budget, dates, distance, pickup timing, size or other constraints"),
+          .describe(
+            "Budget, dates, distance, size or other constraints. ALWAYS include any timing the user " +
+              "mentioned (e.g. 'wants to come buy it within the hour') — it changes what the agent asks for",
+          ),
         reporting_instructions: z
           .string()
           .optional()
