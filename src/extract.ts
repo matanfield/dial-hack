@@ -1,4 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
+// Named import: the SDK's ESM and CJS type declarations both export the class
+// by name, while the default-import interop differs by environment (broke the
+// Vercel build despite passing locally).
+import { Anthropic } from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 // The Anthropic SDK's zod helper requires the zod v4 API; the MCP SDK elsewhere
 // in this repo still uses v3. zod 3.25+ ships both — this file uses v4 only.
