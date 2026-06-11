@@ -126,6 +126,11 @@ curl -X POST https://getdial.ai/api/v1/webhooks \
   instructions rejected, no automatic retries.
 - The built-in call instruction forbids the voice agent from giving payment details or
   committing the user beyond the prepared questions.
+- The instruction template makes the voice agent behave like a human caller: exactly one
+  question per turn (with a contrastive good/bad example), varied acknowledgments, agenda
+  instead of script, handling for counter-questions, holds, transfers, IVR menus,
+  voicemail, call-backs, and misheard details, plus a structured end-of-call report.
+  Inspect the exact prompt with `pnpm preview` (`scripts/preview-instruction.ts`).
 - Phone numbers are masked in all model-facing output; full numbers and transcripts stay
   in the gitignored `.data/` directory.
 - The live Dial API returns `status` as an object (`{state, terminationType, label}`)
