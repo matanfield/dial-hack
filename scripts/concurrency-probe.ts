@@ -5,6 +5,7 @@
 //
 // Usage (REAL calls to numbers YOU control — your own phones):
 //   pnpm tsx scripts/concurrency-probe.ts --yes -n 2 +9725XXXXXXXX [+9725YYYYYYYY ...]
+//   pnpm tsx scripts/concurrency-probe.ts --yes -n 2 --from-id dial_num_1 --from-id dial_num_2 +9725XXXXXXXX +9725YYYYYYYY
 //   then -n 5, then -n 10 (numbers are cycled; repeats hit busy, which is fine —
 //   the signal is whether Dial ACCEPTS N simultaneous placements and none turn
 //   silently 'failed').
@@ -19,10 +20,12 @@ const yes = args.includes("--yes");
 const nFlag = args.indexOf("-n");
 const n = nFlag >= 0 ? Number(args[nFlag + 1]) : 2;
 const numbers = args.filter((a) => /^\+\d{7,15}$/.test(a));
+const fromIds = args.flatMap((a, i) => (a === "--from-id" && args[i + 1] ? [args[i + 1]] : []));
 
 if (!yes || numbers.length === 0 || !Number.isInteger(n) || n < 1 || n > 10) {
   console.error(
     "Usage: pnpm tsx scripts/concurrency-probe.ts --yes -n <1-10> <+E164 number you own> [more numbers...]\n" +
+      "Optional: pass --from-id <Dial phone number id> more than once to cycle caller numbers.\n" +
       "Places n REAL simultaneous calls (costs money). Only call numbers you control.",
   );
   process.exit(1);
@@ -41,12 +44,16 @@ function sleep(ms: number): Promise<void> {
 async function main(): Promise<void> {
   const stamp = Date.now().toString(36);
   console.log(`Placing ${n} simultaneous calls (cycling ${numbers.length} number(s))...`);
+  if (fromIds.length > 0) {
+    console.log(`Cycling ${fromIds.length} from-number id(s)...`);
+  }
 
   const t0 = Date.now();
   const placements = await Promise.allSettled(
     Array.from({ length: n }, (_, i) =>
       placeCall({
         to: numbers[i % numbers.length],
+        fromNumberId: fromIds[i % fromIds.length],
         language: "en-US",
         instruction: INSTRUCTION,
         idempotencyKey: `probe-${stamp}-${i}`,
