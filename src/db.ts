@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+// pg is CJS; default-import then destructure is the ESM-safe form.
+import pg from "pg";
 
 // Document store with two backends:
 // - Postgres (set DATABASE_URL) — durable across serverless instances; required
@@ -23,10 +25,7 @@ interface Backend {
 // --- Postgres backend ------------------------------------------------------
 
 function createPgBackend(connectionString: string): Backend {
-  // Lazy import keeps local file-mode startup free of pg.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { Pool } = require("pg") as typeof import("pg");
-  const pool = new Pool({ connectionString, max: 3 });
+  const pool = new pg.Pool({ connectionString, max: 3 });
   // An idle client losing its backend connection emits 'error' on the pool;
   // without a listener that crashes the whole process.
   pool.on("error", (err) => console.warn("db: idle client error:", err.message));
