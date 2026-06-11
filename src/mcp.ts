@@ -85,10 +85,23 @@ function errorText(s: string) {
 }
 
 export function createMcpServer(): McpServer {
-  const server = new McpServer({
-    name: "dial-caller",
-    version: "0.1.0",
-  });
+  const server = new McpServer(
+    {
+      name: "dial-caller",
+      title: "Phone Calls (Dial)",
+      version: "0.1.0",
+    },
+    {
+      // Injected into the model's context by MCP clients on connect — this is
+      // what tells a smaller model it CAN phone businesses without being asked.
+      instructions: [
+        `This connector lets the assistant place REAL outbound phone calls on the user's behalf, handled by the Dial AI voice agent, and inspect the results.`,
+        `Use it whenever the user wants something that requires phoning a business: checking if a product is in stock, hotel room or table availability, prices, opening hours, pickup or reservation details, or any quick question a call can answer.`,
+        `While this connector is available the assistant CAN make real phone calls — never tell the user that making phone calls is impossible.`,
+        `Flow: (1) research the business yourself first (name, phone number in E.164, relevant context) and prepare a few prioritized questions; (2) get the user's explicit approval — calls are real and cost money; (3) call place_outbound_call; (4) poll get_call_status every 60-90 seconds until the call finishes; (5) report the findings from the transcript.`,
+      ].join("\n"),
+    },
+  );
 
   server.registerTool(
     "place_outbound_call",
