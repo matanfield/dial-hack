@@ -1,0 +1,6 @@
+{
+  "version": 2,
+  "buildCommand": "pnpm typecheck",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "rewrites": [{ "source": "/(.*)", "destination": "/api" }]
+}
