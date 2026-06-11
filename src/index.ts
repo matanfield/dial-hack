@@ -4,7 +4,8 @@ import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpServer } from "./mcp.js";
 import { fetchCall, normalizeStatus } from "./dial.js";
-import { updateCall } from "./store.js";
+import { updateCall, getCall, markEventProcessed } from "./store.js";
+import { advanceSurvey } from "./survey.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -95,21 +96,47 @@ app.post("/api/webhooks/dial", async (req, res) => {
   const event = req.body ?? {};
   const type: string = event.type ?? "unknown";
   const callId: string | undefined = event.data?.callId;
-  console.log(`webhook: type=${type} call=${callId ?? "-"}`);
 
-  if (type === "call.ended" && callId) {
-    // Webhook status is documented as a string but normalize defensively —
-    // the live API has returned {state, terminationType, label} objects.
-    const status = event.data?.status != null ? normalizeStatus(event.data.status).status : undefined;
-    updateCall(String(callId), { status }, { type, payload: event.data });
-  } else if (type === "call.transcribed" && callId) {
-    // Thin event: transcript lives on the call object, fetch it now.
-    try {
+  // Webhook subscriptions are ACCOUNT-level and the Dial key is shared with the
+  // sibling dial-mcp deployment — only process calls this server placed.
+  // Ownership runs BEFORE dedupe so a duplicate delivery arriving after the
+  // call record exists still gets processed (an event ACKed early is simply
+  // lost to the webhook path and recovered by the poll path).
+  const rec = callId ? await getCall(String(callId)) : undefined;
+  console.log(`webhook: type=${type} call=${callId ?? "-"} owned=${Boolean(rec)}`);
+  if (!rec || !callId) {
+    res.status(200).json({ received: true, ignored: "unknown call" });
+    return;
+  }
+
+  // Delivery is at-least-once: dedupe on the per-event id so retries (and the
+  // 6-attempt backoff) can't double-advance survey state.
+  const eventId = req.header("X-Dial-Event-ID") ?? event.id;
+  if (eventId && !(await markEventProcessed(String(eventId)))) {
+    res.status(200).json({ received: true, duplicate: true });
+    return;
+  }
+
+  try {
+    if (type === "call.ended") {
+      // Webhook status is documented as a string but normalize defensively —
+      // the live API has returned {state, terminationType, label} objects.
+      const status = event.data?.status != null ? normalizeStatus(event.data.status).status : undefined;
+      await updateCall(String(callId), { status }, { type, payload: event.data });
+    } else if (type === "call.transcribed") {
+      // Thin event: transcript lives on the call object, fetch it now.
       const call = await fetchCall(String(callId));
-      updateCall(String(callId), { status: call.status, transcript: call.transcript ?? undefined }, { type });
-    } catch (err) {
-      console.warn(`webhook: transcript fetch failed for ${callId}:`, (err as Error).message);
+      await updateCall(String(callId), { status: call.status, transcript: call.transcript ?? undefined }, { type });
     }
+    // Survey calls: push the state machine forward (refresh statuses, extract
+    // findings, fire the next wave). Also driven by get_survey_status polls,
+    // so a failure here only delays progress. Dial's per-attempt timeout is
+    // 10s; advance work is a few hundred ms unless extraction runs.
+    if (rec.surveyId && (type === "call.ended" || type === "call.transcribed")) {
+      await advanceSurvey(rec.surveyId);
+    }
+  } catch (err) {
+    console.warn(`webhook: processing ${type} for ${callId} failed:`, (err as Error).message);
   }
   res.status(200).json({ received: true });
 });

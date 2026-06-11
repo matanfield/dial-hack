@@ -25,7 +25,16 @@ Example demo prompts:
 | `place_outbound_call` | Start one real outbound Dial call (destination, language, goal, researched context, exact questions). Requires user approval in the client. |
 | `get_call_status` | Poll a call by id: status, duration, transcript when ready (read-only, no approval needed) |
 | `list_recent_calls` | Recent calls placed through this server, numbers masked (read-only) |
+| `find_businesses` | Google Places search: candidates with phone numbers, rating, price, open-now, distance (read-only; needs `GOOGLE_MAPS_API_KEY`) |
+| `start_availability_survey` | Call 2-8 user-approved businesses in small waves to check availability/price for the same request; returns a `survey_id` |
+| `get_survey_status` | Per-business progress + extracted findings + ranked top candidates; also advances the survey (read-only) |
+| `reserve_option` | Final confirmation call to the candidate the user picked (name-hold only — never payment) |
 | `health` | Server readiness: credential presence (never values), limits, usage (read-only) |
+
+The survey pipeline is documented in [docs/step-2-availability-concierge-spec.md](docs/step-2-availability-concierge-spec.md).
+Surveys are driven by an idempotent state machine advanced by Dial webhooks AND status
+polls — either alone suffices. On serverless, set `DATABASE_URL` (e.g. Neon) or survey
+state is per-instance best-effort.
 
 ## Setup
 
@@ -49,6 +58,13 @@ pnpm smoke                              # against localhost
 bash scripts/smoke.sh https://dial-hack.vercel.app
 ```
 
+Dial concurrency probe (REAL calls to numbers you own — verifies parallel fan-out
+viability before relying on surveys; see the Step 2 spec):
+
+```bash
+pnpm probe -- --yes -n 2 +9725XXXXXXXX   # then -n 5, then -n 10
+```
+
 ## Environment
 
 | Var | Required | Meaning |
@@ -59,6 +75,10 @@ bash scripts/smoke.sh https://dial-hack.vercel.app
 | `PORT` | no | local port, default 3000 |
 | `MAX_CALLS_PER_HOUR` / `MAX_CALLS_PER_DAY` | no | shared hard caps, default 6 / 20 |
 | `DIAL_WEBHOOK_SECRET` | no | `whsec_...`; when set, webhook signatures are enforced |
+| `GOOGLE_MAPS_API_KEY` | for surveys | enables `find_businesses` (Places API (New) Text Search) |
+| `ANTHROPIC_API_KEY` | optional | server-side transcript extraction for surveys (`EXTRACT_MODEL` to override the model) |
+| `DATABASE_URL` | for surveys on serverless | Postgres (e.g. Neon via Vercel Marketplace); without it state is per-instance JSON |
+| `MAX_SURVEY_PARALLEL` | no | calls per survey wave, server-clamped 1-5, default 3 |
 
 ## Deploy
 

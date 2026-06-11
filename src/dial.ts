@@ -85,6 +85,10 @@ export async function placeCall(args: {
   to: string;
   language?: string;
   instruction: string;
+  // Account-scoped Idempotency-Key: replaying the same key returns the original
+  // call instead of dialing again, and a non-2xx response guarantees no live
+  // call — exactly the retry property survey fan-out and reservations need.
+  idempotencyKey?: string;
 }): Promise<{ callId: string; status: string }> {
   const body: Record<string, string> = {
     to: args.to,
@@ -95,6 +99,7 @@ export async function placeCall(args: {
 
   const data = (await dialFetch("/api/v1/calls", {
     method: "POST",
+    headers: args.idempotencyKey ? { "Idempotency-Key": args.idempotencyKey } : undefined,
     body: JSON.stringify(body),
   })) as { call: DialCallObject };
 

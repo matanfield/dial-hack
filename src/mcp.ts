@@ -1,15 +1,24 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { placeCall, fetchCall, dialConfigured } from "./dial.js";
+import { buildInstruction } from "./instruction.js";
+import { searchBusinesses, placesConfigured } from "./places.js";
+import { startSurvey, advanceSurvey, surveyStatusView, reserveOption } from "./survey.js";
+import { extractorConfigured } from "./extract.js";
+import { durableStoreConfigured } from "./db.js";
 import {
   saveCall,
   updateCall,
   getCall,
   listCalls,
   countCallsSince,
+  isDoNotCall,
   maskPhone,
   redactPhones,
 } from "./store.js";
+
+// Kept here so scripts/preview-instruction.ts and earlier imports keep working.
+export { buildInstruction } from "./instruction.js";
 
 const MAX_CALLS_PER_HOUR = Number(process.env.MAX_CALLS_PER_HOUR ?? 6);
 const MAX_CALLS_PER_DAY = Number(process.env.MAX_CALLS_PER_DAY ?? 20);
@@ -17,65 +26,19 @@ const MAX_CALLS_PER_DAY = Number(process.env.MAX_CALLS_PER_DAY ?? 20);
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 
-// The Dial voice agent's system prompt. Layout matters: the one-question-per-turn
-// rule and a contrastive example come BEFORE the agenda list, because a numbered
-// list read first primes the model to recite it in one breath (observed failure).
-export function buildInstruction(args: {
-  goal: string;
-  callerIdentity: string;
-  researchedContext: string;
-  questions: string[];
-  constraints?: string;
-  language: string;
-  reportingInstructions?: string;
-}): string {
-  const questionLines = args.questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
-  return [
-    `You are calling a business on behalf of a customer. Introduce yourself as an AI assistant calling on behalf of ${args.callerIdentity}.`,
-    `If they sound confused or ask whether you are a robot, confirm cheerfully in one sentence and continue.`,
-    `Speak the language with tag "${args.language}" for the entire call. Never say the tag aloud, and do not switch languages unless the other person does.`,
-    `Goal: ${args.goal}`,
-    `Context researched in advance: ${args.researchedContext}`,
-    args.constraints
-      ? `Constraints: ${args.constraints}. Use them to judge answers: if an option violates a constraint, say it may not work and ask once about an alternative that fits — note both for the report.`
-      : null,
-    ``,
-    `MOST IMPORTANT RULE: ask exactly ONE question per turn. After you ask it, stop talking and wait for the answer. Never ask two questions in one turn and never chain questions with "and" or "also".`,
-    `BAD turn: "Do you have it in stock, how much does it cost, and when could I pick it up?"`,
-    `GOOD turn: "Do you have it in stock?" — then silence until they answer. Price and pickup come in later turns.`,
-    ``,
-    `Things to find out, most important first. Cover them one per turn, in whatever order the conversation allows. Never read this list aloud, never say how many questions you have, never number your questions:`,
-    questionLines,
-    ``,
-    `How to run the call like a considerate human caller:`,
-    `- Open with at most two short sentences: greet, say who you are and why you are calling — then stop and wait. Do not ask an agenda question in the opening turn. If they open with small talk, answer it in a few words first.`,
-    `- If it is not obvious you reached the right business or branch, confirm it in one short phrase before starting on the agenda.`,
-    `- Keep every turn to one or two short sentences. Vary your acknowledgments ("Got it", "Perfect", or just continue) — never use the same one twice in a row.`,
-    `- Follow the conversation, not the list: skip items already answered, ask a short follow-up when an answer is vague, reorder when natural.`,
-    `- Answer their questions briefly using the context above. If you do not know something, say you will check with the customer — never guess.`,
-    `- If a critical detail (price, date, time, name) is unclear or surprising, repeat it back in a few words to confirm. Never report a number you did not hear clearly.`,
-    `- If they mishear you, rephrase shorter and slower instead of repeating word for word.`,
-    `- If an automated menu answers, pick the option most likely to reach someone who can help (front desk, sales, reservations).`,
-    `- If you reach voicemail, leave one short sentence saying who you are calling for and why, say you will try again later, and hang up — do not recite the agenda or leave personal details.`,
-    `- If asked to hold, be transferred, or they need to check something, say thanks and wait in silence — do not fill the pause. When someone new picks up, re-introduce yourself in one sentence.`,
-    `- If they sound rushed, drop the pleasantries and ask only the most important remaining questions. If they ask you to call back, ask when is better, thank them, and end.`,
-    `- If you reached a wrong number, apologize briefly and end. If the person cannot answer, ask once whether someone there can; never ask the same question more than twice.`,
-    `- If the main item is unavailable, drop questions that no longer apply; ask about an alternative only if it serves the goal.`,
-    `- If what the customer wants is available and they intend to come soon, ask once whether it can be held or reserved for them and until when — even if no one listed that as a question.`,
-    `- Before saying goodbye, run through your agenda silently: if a question that still applies is unanswered, ask it now.`,
-    `- Close clearly: if anything was agreed (a hold, a price, a time), restate it in one short sentence, thank them, and end the call. Do not read the rest of your notes back to them.`,
-    ``,
-    `Hard rules (these override everything else on this call):`,
-    `- Never provide payment details. If asked for payment or a deposit, say the customer will pay in person or arrange it directly later.`,
-    `- Do not commit the customer to anything beyond what your questions cover; if unsure, say you will pass the information along.`,
-    ``,
-    args.reportingInstructions
-      ? `Reporting: ${args.reportingInstructions}`
-      : `Reporting: state (1) the call outcome — spoke to a person, voicemail, no answer, or wrong number; (2) the answer to each agenda item, or why it could not be answered; (3) exact prices, times and names as stated, flagging anything you are not sure you heard right; (4) anything useful they volunteered; (5) what remains unanswered. Do not ask extra questions just to fill the report.`,
-  ]
-    .filter((line) => line !== null)
-    .join("\n");
-}
+const PHONE = z
+  .string()
+  .regex(/^\+\d{7,15}$/, "Must be E.164, e.g. +972501234567")
+  .describe(
+    "Phone number in E.164 format, e.g. +972501234567. Copy it digit-for-digit from tool output or " +
+      "the user's message — never retype from memory. If the user gave a local number, convert only " +
+      "the format, keeping every digit",
+  );
+
+const LANGUAGE = z
+  .string()
+  .regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/, "Must be a BCP-47 tag, e.g. he-IL or en-US")
+  .describe("BCP-47 language tag for the call, e.g. 'he-IL' for Hebrew or 'en-US' for English");
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -85,25 +48,67 @@ function errorText(s: string) {
   return { content: [{ type: "text" as const, text: s }], isError: true };
 }
 
+function json(obj: unknown) {
+  return text(JSON.stringify(obj, null, 2));
+}
+
+const GENERIC_GOAL = /^(call|test|hello|check)\b.{0,15}$/i;
+
+// ChatGPT (and other MCP Apps hosts) attach per-request metadata: a stable
+// anonymized user id and a coarse user location. Both are optional everywhere.
+function requestMeta(extra: unknown): Record<string, unknown> {
+  return ((extra as { _meta?: Record<string, unknown> })?._meta ?? {}) as Record<string, unknown>;
+}
+
+function metaLocation(meta: Record<string, unknown>): { lat?: number; lng?: number } {
+  const loc = meta["openai/userLocation"] as { latitude?: number; longitude?: number } | undefined;
+  return { lat: loc?.latitude, lng: loc?.longitude };
+}
+
+async function rateLimitError(extraCalls: number): Promise<string | null> {
+  const lastHour = await countCallsSince(HOUR);
+  const lastDay = await countCallsSince(DAY);
+  if (lastHour + extraCalls > MAX_CALLS_PER_HOUR) {
+    const remaining = Math.max(0, MAX_CALLS_PER_HOUR - lastHour);
+    return `Rate limit: this would need ${extraCalls} call(s) but only ${remaining} remain this hour (max ${MAX_CALLS_PER_HOUR}/hour for this shared prototype). Use fewer candidates or try later.`;
+  }
+  if (lastDay + extraCalls > MAX_CALLS_PER_DAY) {
+    return `Rate limit: max ${MAX_CALLS_PER_DAY} calls per day for this shared prototype. Try tomorrow.`;
+  }
+  return null;
+}
+
 export function createMcpServer(): McpServer {
   const server = new McpServer(
     {
       name: "dial-caller",
       title: "Phone Calls (Dial)",
-      version: "0.1.0",
+      version: "0.2.0",
     },
     {
       // Injected into the model's context by MCP clients on connect — this is
       // what tells a smaller model it CAN phone businesses without being asked.
       instructions: [
-        `This connector lets the assistant place REAL outbound phone calls on the user's behalf, handled by the Dial AI voice agent, and inspect the results.`,
-        `Use it whenever the user wants something that requires phoning a business: checking if a product is in stock, hotel room or table availability, prices, opening hours, pickup or reservation details, or any quick question a call can answer.`,
+        `This connector lets the assistant place REAL outbound phone calls on the user's behalf (handled by the Dial AI voice agent), search for nearby businesses with phone numbers, and run parallel availability surveys across several businesses at once.`,
         `While this connector is available the assistant CAN make real phone calls — never tell the user that making phone calls is impossible.`,
-        `Flow: (1) research the business yourself first (name, phone number in E.164, relevant context) and prepare a few prioritized questions; (2) get the user's explicit approval — calls are real and cost money; (3) call place_outbound_call; (4) poll get_call_status every 60-90 seconds until the call finishes; (5) report the findings from the transcript.`,
-        `The voice agent knows ONLY what you pass in the tool inputs. Fill them richly: copy phone numbers digit-for-digit and names/titles letter-for-letter as the user wrote them, put the user's timing intentions in constraints, and give 3-5 prioritized agenda topics including practical follow-ups (price, hold for pickup, address).`,
+        ``,
+        `Use the AVAILABILITY SURVEY flow whenever the user needs something specific, soon, nearby — a hotel room tonight, a restaurant table, a product in stock, an open pharmacy: ` +
+          `(1) elicit the criteria conversationally: what exactly, where (ask for an address/area if location is unknown), budget, timing, language of the businesses; ` +
+          `(2) call find_businesses to get candidates with phone numbers, ratings and distance; ` +
+          `(3) show the user the best candidates and get explicit approval — calls are real and cost money; ` +
+          `(4) call start_availability_survey with the approved candidates (3-6 is the sweet spot; calls go out in small waves); ` +
+          `(5) poll get_survey_status every 60-90 seconds, keeping the user updated as results land; ` +
+          `(6) when done, present the top options with prices and let the user pick; ` +
+          `(7) call reserve_option to place the final confirmation call — it secures a NAME-HOLD only, never payment.`,
+        ``,
+        `Use the SINGLE CALL flow (place_outbound_call + get_call_status) when one specific business needs calling: research the target yourself first (name, E.164 number, context), prepare 3-5 prioritized questions, get the user's approval, then poll every 60-90 seconds until the transcript arrives.`,
+        ``,
+        `The voice agent knows ONLY what you pass in the tool inputs. Fill them richly: copy phone numbers digit-for-digit and names/titles letter-for-letter, put the user's timing intentions in constraints, and give prioritized agenda topics including practical follow-ups (price, hold for pickup, address).`,
       ].join("\n"),
     },
   );
+
+  // --- Single-call tools (Step 1 contract, unchanged) ----------------------
 
   server.registerTool(
     "place_outbound_call",
@@ -115,20 +120,11 @@ export function createMcpServer(): McpServer {
         "opening hours, service quotes. Before calling this tool, you must have already researched the target " +
         "(name, phone number, relevant context) and prepared specific questions. The call costs money and rings a real " +
         "phone — only call after the user has approved, and never retry automatically if it fails. Results " +
-        "(transcript) may arrive minutes later; poll with get_call_status.",
+        "(transcript) may arrive minutes later; poll with get_call_status. For checking SEVERAL businesses, " +
+        "use start_availability_survey instead.",
       inputSchema: {
-        to: z
-          .string()
-          .regex(/^\+\d{7,15}$/, "Must be E.164, e.g. +972501234567")
-          .describe(
-            "Destination phone number in E.164 format, e.g. +972501234567. Copy it digit-for-digit " +
-              "from the user's message or your research — never retype from memory. If the user gave a " +
-              "local number (e.g. 052-3773115), convert only the format, keeping every digit",
-          ),
-        language: z
-          .string()
-          .regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/, "Must be a BCP-47 tag, e.g. he-IL or en-US")
-          .describe("BCP-47 language tag for the call, e.g. 'he-IL' for Hebrew or 'en-US' for English"),
+        to: PHONE,
+        language: LANGUAGE,
         caller_identity: z
           .string()
           .min(2)
@@ -174,19 +170,16 @@ export function createMcpServer(): McpServer {
       if (!dialConfigured()) {
         return errorText("Server is not configured with Dial credentials. Check the health tool.");
       }
-      if (countCallsSince(HOUR) >= MAX_CALLS_PER_HOUR) {
-        return errorText(
-          `Rate limit reached: max ${MAX_CALLS_PER_HOUR} calls per hour for this shared prototype. Try later.`,
-        );
-      }
-      if (countCallsSince(DAY) >= MAX_CALLS_PER_DAY) {
-        return errorText(`Rate limit reached: max ${MAX_CALLS_PER_DAY} calls per day for this shared prototype.`);
-      }
-
-      const generic = /^(call|test|hello|check)\b.{0,15}$/i;
-      if (generic.test(args.goal) || args.questions.every((q) => q.length < 10)) {
+      const limited = await rateLimitError(1);
+      if (limited) return errorText(limited);
+      if (GENERIC_GOAL.test(args.goal) || args.questions.every((q) => q.length < 10)) {
         return errorText(
           "Rejected: instructions are too generic. Provide a specific goal, researched context, and concrete questions.",
+        );
+      }
+      if (await isDoNotCall(args.to)) {
+        return errorText(
+          "Rejected: this business previously asked not to receive calls like this. It is on the do-not-call list.",
         );
       }
 
@@ -203,7 +196,7 @@ export function createMcpServer(): McpServer {
       try {
         const result = await placeCall({ to: args.to, language: args.language, instruction });
         const masked = maskPhone(args.to);
-        saveCall({
+        await saveCall({
           callId: result.callId,
           to: args.to,
           maskedTo: masked,
@@ -212,6 +205,7 @@ export function createMcpServer(): McpServer {
           goal: redactPhones(args.goal),
           status: result.status,
           createdAt: new Date().toISOString(),
+          kind: "single",
         });
         return text(
           [
@@ -244,15 +238,25 @@ export function createMcpServer(): McpServer {
       },
     },
     async ({ call_id }) => {
-      const local = getCall(call_id);
+      const local = await getCall(call_id);
+      // The Dial account is shared (sibling deployment, all users of this
+      // prototype): never proxy lookups for calls this server didn't place,
+      // or any call_id on the account leaks its full transcript.
+      if (!local) {
+        return errorText(
+          "Unknown call_id: this server has no record of that call, so its status cannot be shared.",
+        );
+      }
       try {
         const remote = await fetchCall(call_id);
-        const merged = updateCall(call_id, {
+        const merged = await updateCall(call_id, {
           status: remote.status,
           transcript: remote.transcript ?? local?.transcript,
         });
         const rec = merged ?? local;
-        const transcript = remote.transcript ?? rec?.transcript ?? null;
+        const rawTranscript = remote.transcript ?? rec?.transcript ?? null;
+        // Transcripts can carry phone numbers read aloud — keep them masked.
+        const transcript = rawTranscript ? redactPhones(rawTranscript) : null;
         let note: string;
         if (!remote.isTerminal) {
           note = "Call still in progress. Wait ~60-90 seconds and check again.";
@@ -264,41 +268,26 @@ export function createMcpServer(): McpServer {
         } else {
           note = `Call ended with status '${remote.status}' (no conversation result). Report this to the user; do not retry automatically.`;
         }
-        return text(
-          JSON.stringify(
-            {
-              call_id,
-              status: remote.status,
-              finished: remote.isTerminal,
-              to: rec?.maskedTo,
-              created_at: rec?.createdAt ?? remote.createdAt,
-              ended_at: remote.endedAt,
-              duration_seconds: remote.durationSeconds,
-              transcript,
-              note,
-            },
-            null,
-            2,
-          ),
-        );
+        return json({
+          call_id,
+          status: remote.status,
+          finished: remote.isTerminal,
+          to: rec?.maskedTo,
+          created_at: rec?.createdAt ?? remote.createdAt,
+          ended_at: remote.endedAt,
+          duration_seconds: remote.durationSeconds,
+          transcript,
+          note,
+        });
       } catch (err) {
-        if (local) {
-          return text(
-            JSON.stringify(
-              {
-                call_id,
-                status: local.status,
-                to: local.maskedTo,
-                created_at: local.createdAt,
-                transcript: local.transcript ?? null,
-                note: `Could not reach Dial right now (${(err as Error).message}); this is the last known local state.`,
-              },
-              null,
-              2,
-            ),
-          );
-        }
-        return errorText(`Unknown call_id and Dial lookup failed: ${(err as Error).message}`);
+        return json({
+          call_id,
+          status: local.status,
+          to: local.maskedTo,
+          created_at: local.createdAt,
+          transcript: local.transcript ? redactPhones(local.transcript) : null,
+          note: `Could not reach Dial right now (${(err as Error).message}); this is the last known local state.`,
+        });
       }
     },
   );
@@ -314,17 +303,284 @@ export function createMcpServer(): McpServer {
       },
     },
     async ({ limit }) => {
-      const records = listCalls(limit ?? 10).map((c) => ({
+      // Shared across all users of this prototype: survey/reservation goals
+      // can carry one user's request details (names, what they're buying) and
+      // survey_ids act as capability tokens — show neither.
+      const records = (await listCalls(limit ?? 10)).map((c) => ({
         call_id: c.callId,
         to: c.maskedTo,
         status: c.status,
-        goal: c.goal,
+        goal:
+          c.kind === "survey"
+            ? "[availability survey call]"
+            : c.kind === "reservation"
+              ? "[reservation call]"
+              : c.goal,
+        kind: c.kind ?? "single",
         language: c.language,
         created_at: c.createdAt,
         updated_at: c.updatedAt,
         has_transcript: Boolean(c.transcript),
       }));
-      return text(JSON.stringify({ count: records.length, calls: records }, null, 2));
+      return json({ count: records.length, calls: records });
+    },
+  );
+
+  // --- Availability-survey tools (Step 2) -----------------------------------
+
+  server.registerTool(
+    "find_businesses",
+    {
+      title: "Find nearby businesses",
+      description:
+        "Searches Google Places for businesses matching a query and returns candidates WITH phone numbers, " +
+        "ratings, price level, open-now and distance — ready for an availability survey. Results are fresh from " +
+        "Google and are not stored. Use a specific query in the user's market language when possible " +
+        "(e.g. 'hardware store with charcoal near Florentin, Tel Aviv'). After presenting candidates to the user " +
+        "and getting approval, pass the chosen ones to start_availability_survey.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        query: z
+          .string()
+          .min(3)
+          .describe(
+            "Free-text search, ideally including the place type and area, e.g. 'late-night pharmacy near Allenby, Tel Aviv'",
+          ),
+        language_code: z
+          .string()
+          .regex(/^[a-z]{2}(-[A-Za-z]{2})?$/)
+          .optional()
+          .describe("Results language, e.g. 'he' or 'en'. Default: Google's auto-detection"),
+        lat: z.number().min(-90).max(90).optional().describe("Latitude to bias results around (user's location)"),
+        lng: z.number().min(-180).max(180).optional().describe("Longitude to bias results around"),
+        radius_m: z
+          .number()
+          .int()
+          .min(100)
+          .max(50000)
+          .optional()
+          .describe("Bias radius in meters around lat/lng, default 5000"),
+        open_now: z.boolean().optional().describe("Only businesses open right now — usually what the user wants"),
+        min_rating: z.number().min(0).max(5).optional().describe("Drop candidates rated below this"),
+        max_results: z.number().int().min(1).max(20).optional().describe("Max candidates to return, default 20"),
+      },
+    },
+    async (args, extra) => {
+      if (!placesConfigured()) {
+        return errorText(
+          "Business search is not configured (GOOGLE_MAPS_API_KEY missing). Research businesses and their phone numbers yourself (web search), then use start_availability_survey or place_outbound_call directly.",
+        );
+      }
+      try {
+        // ChatGPT sends coarse user location on every call — use it as the
+        // default bias so "near me" works without the model asking.
+        const metaLoc = metaLocation(requestMeta(extra));
+        const { candidates, droppedWithoutPhone } = await searchBusinesses({
+          query: args.query,
+          languageCode: args.language_code,
+          lat: args.lat ?? metaLoc.lat,
+          lng: args.lng ?? metaLoc.lng,
+          radiusM: args.radius_m,
+          openNow: args.open_now,
+          maxResults: args.max_results,
+        });
+        const filtered = args.min_rating
+          ? candidates.filter((c) => (c.rating ?? 0) >= args.min_rating!)
+          : candidates;
+        return json({
+          count: filtered.length,
+          dropped_without_phone: droppedWithoutPhone,
+          candidates: filtered,
+          note:
+            "Data is fresh from Google Places (not stored). Present the best candidates to the user with rating/price/distance, " +
+            "confirm which to call (calls are real and cost money), then call start_availability_survey with the approved subset.",
+        });
+      } catch (err) {
+        return errorText(`Business search failed: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "start_availability_survey",
+    {
+      title: "Start availability survey (parallel calls)",
+      description:
+        "Places REAL phone calls to SEVERAL businesses (in small waves, not all at once) to check availability, " +
+        "price and conditions for the same request — the fast way to answer 'who nearby has X right now?'. " +
+        "Costs real money per call: only start after the user explicitly approved the candidate list. " +
+        "Businesses on the do-not-call list or called in the last 24h are skipped automatically. " +
+        "Returns a survey_id immediately; poll get_survey_status every 60-90 seconds for progress and results. " +
+        "Never start the same survey twice — if this fails, surface the error.",
+      inputSchema: {
+        goal: z
+          .string()
+          .min(20)
+          .describe(
+            "What to find out at every business, specific and self-contained, e.g. " +
+              "'Check if a double room is available TONIGHT for 2 adults and the total price'",
+          ),
+        language: LANGUAGE,
+        caller_identity: z
+          .string()
+          .min(2)
+          .describe("Who the agent says it is calling for, e.g. 'Matan, a customer near Rothschild Blvd'"),
+        questions: z
+          .array(z.string().min(5))
+          .min(1)
+          .max(6)
+          .describe(
+            "Agenda topics asked at EVERY business, most important first, e.g. " +
+              "['double room available tonight', 'total price for one night', 'can they hold it under the customer's name until 2am', 'check-in instructions']",
+          ),
+        constraints: z
+          .string()
+          .optional()
+          .describe("Budget, timing, party size, distance — ALWAYS include the user's timing (e.g. 'arriving within 30 minutes')"),
+        candidates: z
+          .array(
+            z.object({
+              name: z.string().min(1).describe("Business name, exactly as found"),
+              phone: PHONE,
+              place_id: z.string().optional().describe("Google place_id from find_businesses, if available"),
+              note: z
+                .string()
+                .optional()
+                .describe("Useful context for the call: address, rating, price seen online, distance"),
+            }),
+          )
+          .min(2)
+          .max(8)
+          .describe("The businesses the USER APPROVED calling, best candidates first. 3-6 is the sweet spot"),
+      },
+    },
+    async (args, extra) => {
+      if (!dialConfigured()) {
+        return errorText("Server is not configured with Dial credentials. Check the health tool.");
+      }
+      if (GENERIC_GOAL.test(args.goal) || args.questions.every((q) => q.length < 10)) {
+        return errorText(
+          "Rejected: instructions are too generic. Provide a specific goal and concrete questions.",
+        );
+      }
+      const limited = await rateLimitError(args.candidates.length);
+      if (limited) return errorText(limited);
+
+      try {
+        const meta = requestMeta(extra);
+        const survey = await startSurvey({
+          goal: args.goal,
+          language: args.language,
+          callerIdentity: args.caller_identity,
+          constraints: args.constraints,
+          questions: args.questions,
+          candidates: args.candidates,
+          userKey: typeof meta["openai/subject"] === "string" ? (meta["openai/subject"] as string) : undefined,
+        });
+        const dialed = survey.candidates.filter((c) => c.callId).length;
+        const remaining = survey.candidates.filter((c) => !c.callId && !c.skipped).length;
+        const skipped = survey.candidates.filter((c) => c.skipped).map((c) => `${c.name}: ${c.skipped}`);
+        if (survey.status === "complete" && dialed === 0) {
+          return errorText(
+            [
+              `No calls were placed — every candidate was skipped:`,
+              skipped.join("; "),
+              `Report this to the user and pick different candidates.`,
+            ].join("\n"),
+          );
+        }
+        return text(
+          [
+            `Availability survey started. Real phone calls are now in progress.`,
+            `survey_id: ${survey.surveyId}`,
+            `first wave: ${dialed} call(s) dialing now` +
+              (remaining > 0 ? `; ${remaining} more candidate(s) go out in later waves automatically.` : `.`),
+            skipped.length ? `skipped: ${skipped.join("; ")}` : null,
+            ``,
+            `Poll get_survey_status with this survey_id every 60-90 seconds. A full survey takes ~5-10 minutes; keep the user updated as findings land. Do NOT start another survey for the same request.`,
+          ]
+            .filter((l) => l !== null)
+            .join("\n"),
+        );
+      } catch (err) {
+        return errorText(`Survey failed to start: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_survey_status",
+    {
+      title: "Get availability survey status",
+      description:
+        "Returns per-business progress and extracted findings (availability, price, conditions) for a survey, " +
+        "plus a ranked top_candidates list when results are in. Also advances the survey: launches the next wave " +
+        "of calls when the current one finishes. Poll every 60-90 seconds while status is 'running'.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        survey_id: z.string().min(1).describe("The survey_id returned by start_availability_survey"),
+      },
+    },
+    async ({ survey_id }) => {
+      try {
+        const survey = await advanceSurvey(survey_id);
+        if (!survey) return errorText(`Unknown survey_id ${survey_id}.`);
+        const view = await surveyStatusView(survey_id);
+        return json(view);
+      } catch (err) {
+        return errorText(`Could not refresh survey: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "reserve_option",
+    {
+      title: "Reserve chosen option (confirmation call)",
+      description:
+        "Places the FINAL confirmation call to the candidate the user picked from a survey: asks the business " +
+        "to hold/reserve under the customer's name (a name-hold — the voice agent never gives payment details, " +
+        "so this is not a guaranteed booking) and confirms price and pickup/arrival. Costs real money; only call " +
+        "after the user explicitly picked. Poll get_survey_status for the result. If the option is gone, report it " +
+        "and let the user pick the next candidate — never cascade automatically.",
+      inputSchema: {
+        survey_id: z.string().min(1).describe("The survey_id the candidate came from"),
+        candidate_id: z.string().min(1).describe("The candidate_id the user picked, e.g. 'c2'"),
+        reservation_details: z
+          .string()
+          .min(10)
+          .describe(
+            "Everything the business needs for the hold: the customer's name, what exactly to hold, " +
+              "for when, party size / quantity, and when the customer arrives, e.g. " +
+              "'Hold a double room for tonight under the name Matan Field, arriving by 1:30am, one night'",
+          ),
+        language: LANGUAGE.optional().describe("Defaults to the survey's language"),
+      },
+    },
+    async (args) => {
+      if (!dialConfigured()) {
+        return errorText("Server is not configured with Dial credentials. Check the health tool.");
+      }
+      const limited = await rateLimitError(1);
+      if (limited) return errorText(limited);
+      try {
+        const { callId } = await reserveOption({
+          surveyId: args.survey_id,
+          candidateId: args.candidate_id,
+          details: args.reservation_details,
+          language: args.language,
+        });
+        return text(
+          [
+            `Reservation call placed. This is a real phone call in progress.`,
+            `call_id: ${callId}`,
+            ``,
+            `Poll get_survey_status (or get_call_status with this call_id) every 60-90 seconds. When it finishes, report exactly what was agreed: held under what name, until when, price, and what to do on arrival. If the option is gone, tell the user and offer the next-best candidate — do not call anyone else without approval.`,
+          ].join("\n"),
+        );
+      } catch (err) {
+        return errorText(`Reservation call failed to start: ${(err as Error).message}`);
+      }
     },
   );
 
@@ -332,27 +588,24 @@ export function createMcpServer(): McpServer {
     "health",
     {
       title: "Server health",
-      description: "Reports server readiness: Dial credential presence (never values), runtime, base URL, limits.",
+      description: "Reports server readiness: credential presence (never values), runtime, base URL, limits.",
       annotations: { readOnlyHint: true },
       inputSchema: {},
     },
     async () =>
-      text(
-        JSON.stringify(
-          {
-            ok: dialConfigured(),
-            dial_api_key_configured: Boolean(process.env.DIAL_API_KEY),
-            dial_from_number_configured: Boolean(process.env.DIAL_FROM_NUMBER_ID),
-            base_url: process.env.APP_URL ?? "(APP_URL not set)",
-            runtime: `node ${process.version}`,
-            limits: { per_hour: MAX_CALLS_PER_HOUR, per_day: MAX_CALLS_PER_DAY },
-            calls_last_hour: countCallsSince(HOUR),
-            calls_last_day: countCallsSince(DAY),
-          },
-          null,
-          2,
-        ),
-      ),
+      json({
+        ok: dialConfigured(),
+        dial_api_key_configured: Boolean(process.env.DIAL_API_KEY),
+        dial_from_number_configured: Boolean(process.env.DIAL_FROM_NUMBER_ID),
+        business_search_configured: placesConfigured(),
+        transcript_extraction_configured: extractorConfigured(),
+        durable_store_configured: durableStoreConfigured(),
+        base_url: process.env.APP_URL ?? "(APP_URL not set)",
+        runtime: `node ${process.version}`,
+        limits: { per_hour: MAX_CALLS_PER_HOUR, per_day: MAX_CALLS_PER_DAY },
+        calls_last_hour: await countCallsSince(HOUR),
+        calls_last_day: await countCallsSince(DAY),
+      }),
   );
 
   return server;

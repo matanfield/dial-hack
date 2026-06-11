@@ -1,8 +1,8 @@
-import fs from "node:fs";
-import path from "node:path";
+import { db } from "./db.js";
 
-// Tiny JSON-file-backed store for call records and webhook events.
-// Lives in .data/ which is gitignored — records contain phone numbers.
+// Call records and related shared state, persisted via src/db.ts (Postgres when
+// DATABASE_URL is set, JSON files in .data/ otherwise). Records contain full
+// phone numbers — model-facing output must use maskedTo.
 
 export interface CallRecord {
   callId: string;
@@ -14,35 +14,16 @@ export interface CallRecord {
   status: string;
   createdAt: string;
   updatedAt: string;
+  kind?: "single" | "survey" | "reservation";
+  surveyId?: string;
   summary?: string;
   transcript?: string;
   events: { type: string; at: string; payload?: unknown }[];
 }
 
-const DATA_DIR = path.join(process.cwd(), ".data");
-const STORE_FILE = path.join(DATA_DIR, "calls.json");
-
-let calls: Record<string, CallRecord> = {};
-
-function load(): void {
-  try {
-    calls = JSON.parse(fs.readFileSync(STORE_FILE, "utf8"));
-  } catch {
-    calls = {};
-  }
-}
-
-function persist(): void {
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(STORE_FILE, JSON.stringify(calls, null, 2));
-  } catch (err) {
-    // Persistence is best-effort (e.g. read-only serverless FS); memory still works.
-    console.warn("store: persist failed:", (err as Error).message);
-  }
-}
-
-load();
+const CALLS = "calls";
+const DNC = "do_not_call";
+const WEBHOOK_EVENTS = "webhook_events";
 
 export function maskPhone(num: string): string {
   const digits = num.replace(/[^\d]/g, "");
@@ -56,40 +37,63 @@ export function redactPhones(s: string): string {
   return s.replace(/\+?\d(?:[\s-]?\d){6,14}/g, (m) => maskPhone(m));
 }
 
-export function saveCall(record: Omit<CallRecord, "events" | "updatedAt">): CallRecord {
+export async function saveCall(record: Omit<CallRecord, "events" | "updatedAt">): Promise<CallRecord> {
   const full: CallRecord = { ...record, updatedAt: record.createdAt, events: [] };
-  calls[record.callId] = full;
-  persist();
+  await db().put(CALLS, record.callId, full);
   return full;
 }
 
-export function updateCall(
+export async function updateCall(
   callId: string,
   patch: Partial<Pick<CallRecord, "status" | "summary" | "transcript">>,
   event?: { type: string; payload?: unknown },
-): CallRecord | undefined {
-  const rec = calls[callId];
+): Promise<CallRecord | undefined> {
+  const rec = (await db().get(CALLS, callId)) as CallRecord | undefined;
   if (!rec) return undefined;
   // Drop undefined-valued keys: Object.assign would otherwise clobber known
   // data (e.g. a stored transcript) with undefined from a sparse patch.
   const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
   Object.assign(rec, defined, { updatedAt: new Date().toISOString() });
   if (event) rec.events.push({ ...event, at: new Date().toISOString() });
-  persist();
+  await db().put(CALLS, callId, rec);
   return rec;
 }
 
-export function getCall(callId: string): CallRecord | undefined {
-  return calls[callId];
+export async function getCall(callId: string): Promise<CallRecord | undefined> {
+  return (await db().get(CALLS, callId)) as CallRecord | undefined;
 }
 
-export function listCalls(limit = 20): CallRecord[] {
-  return Object.values(calls)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, limit);
+export async function listCalls(limit = 20): Promise<CallRecord[]> {
+  return (await db().list(CALLS, limit)) as CallRecord[];
 }
 
-export function countCallsSince(ms: number): number {
+export async function countCallsSince(ms: number): Promise<number> {
   const cutoff = Date.now() - ms;
-  return Object.values(calls).filter((c) => new Date(c.createdAt).getTime() >= cutoff).length;
+  const recent = (await db().list(CALLS, 500)) as CallRecord[];
+  return recent.filter((c) => new Date(c.createdAt).getTime() >= cutoff).length;
+}
+
+/** Most recent call to a number within the window — used for per-business cooldown. */
+export async function lastCallToNumberSince(to: string, ms: number): Promise<CallRecord | undefined> {
+  const cutoff = Date.now() - ms;
+  const recent = (await db().list(CALLS, 500)) as CallRecord[];
+  return recent.find((c) => c.to === to && new Date(c.createdAt).getTime() >= cutoff);
+}
+
+// --- Do-not-call list ------------------------------------------------------
+// Businesses that asked not to be called again. Never dialed again, ever.
+
+export async function addDoNotCall(phone: string, reason: string): Promise<void> {
+  await db().put(DNC, phone, { phone, reason, createdAt: new Date().toISOString() });
+}
+
+export async function isDoNotCall(phone: string): Promise<boolean> {
+  return Boolean(await db().get(DNC, phone));
+}
+
+// --- Webhook event dedupe --------------------------------------------------
+// Dial delivers at-least-once; X-Dial-Event-ID is the dedupe key.
+
+export async function markEventProcessed(eventId: string): Promise<boolean> {
+  return db().insertIfAbsent(WEBHOOK_EVENTS, eventId, { createdAt: new Date().toISOString() });
 }
