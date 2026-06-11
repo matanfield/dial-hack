@@ -24,6 +24,7 @@ alwaysApply: true
 
 ## Git Workflow
 
+- Before starting any task, run `git pull --ff-only origin main` and handle any sync issue before editing files or running project work.
 - Work on `main` unless the user explicitly asks for a branch.
 - Every completed code/docs task should end with a commit and `git push origin main`.
 - If `origin` is missing or unavailable, still commit locally and report the exact push blocker.
