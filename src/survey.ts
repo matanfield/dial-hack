@@ -331,10 +331,19 @@ async function refreshCandidate(survey: SurveyRecord, cand: SurveyCandidate): Pr
       // Guard on terminal: finishing a candidate whose call is still live
       // would freeze it (refresh skips finished candidates) and block
       // reserve_option's in-flight check forever.
-      await updateCall(cand.callId, { status: remote.status, transcript });
+      await updateCall(cand.callId, {
+        status: remote.status,
+        transcript,
+        durationSeconds: remote.durationSeconds,
+        endedAt: remote.endedAt,
+      });
       if (!cand.findings) await processTranscript(survey, cand, transcript);
     } else if (cand.callDone) {
-      await updateCall(cand.callId, { status: remote.status });
+      await updateCall(cand.callId, {
+        status: remote.status,
+        durationSeconds: remote.durationSeconds,
+        endedAt: remote.endedAt,
+      });
       if (remote.status !== "completed") {
         // call.transcribed never fires for no-answer/busy/failed/canceled —
         // finalize on the terminal status alone.
@@ -419,7 +428,12 @@ export async function advanceSurvey(surveyId: string): Promise<SurveyRecord | un
       }
       const transcript = remote.transcript?.trim();
       if (transcript) {
-        await updateCall(reservation.callId, { status: remote.status, transcript });
+        await updateCall(reservation.callId, {
+          status: remote.status,
+          transcript,
+          durationSeconds: remote.durationSeconds,
+          endedAt: remote.endedAt,
+        });
         reservation.done = remote.isTerminal;
       } else if (remote.isTerminal) {
         // Same transcript-deadline rule as candidates: a completed call whose

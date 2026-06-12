@@ -18,6 +18,9 @@ export interface CallRecord {
   surveyId?: string;
   summary?: string;
   transcript?: string;
+  /** From Dial's call object, persisted on every Dial refresh (webhooks alone miss poll-only calls). */
+  durationSeconds?: number;
+  endedAt?: string;
   events: { type: string; at: string; payload?: unknown }[];
 }
 
@@ -45,7 +48,7 @@ export async function saveCall(record: Omit<CallRecord, "events" | "updatedAt">)
 
 export async function updateCall(
   callId: string,
-  patch: Partial<Pick<CallRecord, "status" | "summary" | "transcript">>,
+  patch: Partial<Pick<CallRecord, "status" | "summary" | "transcript" | "durationSeconds" | "endedAt">>,
   event?: { type: string; payload?: unknown },
 ): Promise<CallRecord | undefined> {
   const rec = (await db().get(CALLS, callId)) as CallRecord | undefined;

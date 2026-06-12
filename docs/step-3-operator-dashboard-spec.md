@@ -2,6 +2,8 @@
 
 Spec drafted 2026-06-12; hardened the same day by an adversarial 3-lens review
 (data accuracy vs code, security/PII, hackathon pragmatics — 32 findings applied).
+Implemented 2026-06-12 (`src/dashboard/`), all phases; verified locally against
+seeded fixtures — the preview-deploy acceptance checks below remain open.
 
 A web dashboard, served by the same Express app, that shows the operator (us — one
 user, no accounts yet) everything the system observes: call history and live status,

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Switchboard</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead-left">
+      <h1>Switchboard</h1>
+      <p class="sub">agent caller &middot; operator console</p>
+    </div>
+    <nav class="tabs" id="tabs">
+      <a href="#/" data-tab="overview">Overview</a>
+      <a href="#/calls" data-tab="calls">Calls</a>
+      <a href="#/surveys" data-tab="surveys">Surveys</a>
+      <a href="#/dnc" data-tab="dnc">Do-not-call</a>
+    </nav>
+    <div class="controls">
+      <button id="demo-toggle" class="pill" type="button" title="Server-side masking for screen recording">demo: off</button>
+      <button id="token-btn" class="pill" type="button" title="Set the dashboard token">token</button>
+    </div>
+  </header>
+  <main id="view" aria-live="polite"></main>
+  <footer class="colophon">every call here is real &mdash; treat the numbers kindly</footer>
+  <script src="./app.js"></script>
+</body>
+</html>

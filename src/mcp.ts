@@ -252,6 +252,8 @@ export function createMcpServer(): McpServer {
         const merged = await updateCall(call_id, {
           status: remote.status,
           transcript: remote.transcript ?? local?.transcript,
+          durationSeconds: remote.durationSeconds,
+          endedAt: remote.endedAt,
         });
         const rec = merged ?? local;
         const rawTranscript = remote.transcript ?? rec?.transcript ?? null;

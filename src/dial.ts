@@ -116,6 +116,8 @@ export async function fetchCall(callId: string): Promise<{
   durationSeconds?: number;
   transcript?: string | null;
   summary?: string | null;
+  /** The system prompt the voice agent ran with. Displayed live-only, never persisted. */
+  instruction?: string | null;
   createdAt?: string;
   endedAt?: string;
 }> {
@@ -134,7 +136,26 @@ export async function fetchCall(callId: string): Promise<{
     transcript: call.transcript ?? null,
     // Dial's call object has no summary field; transcript is the result.
     summary: null,
+    instruction: call.instruction ?? null,
     createdAt: call.createdAt,
+    // terminatedAt is observed on the live API but undocumented — treat as optional.
     endedAt: call.terminatedAt ?? undefined,
   };
+}
+
+/**
+ * Account-wide usage stats (GET /api/v1/usage). The Dial key is shared with the
+ * sibling dial-mcp deployment, so totals include its traffic. Per-number
+ * breakdowns (`topNumbers`, `currentPeriod.numbers`) are stripped: they contain
+ * third-party numbers from calls this server never placed — same reasoning as
+ * get_call_status refusing foreign call_ids.
+ */
+export async function fetchUsage(days = 30): Promise<Record<string, unknown>> {
+  const data = (await dialFetch(`/api/v1/usage?days=${days}`)) as Record<string, unknown>;
+  delete data.topNumbers;
+  const period = data.currentPeriod;
+  if (period && typeof period === "object") {
+    delete (period as Record<string, unknown>).numbers;
+  }
+  return data;
 }

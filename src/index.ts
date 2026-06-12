@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpServer } from "./mcp.js";
+import { createDashboardRouter } from "./dashboard/router.js";
 import { fetchCall, normalizeStatus } from "./dial.js";
 import { updateCall, getCall, markEventProcessed } from "./store.js";
 import { advanceSurvey } from "./survey.js";
@@ -140,6 +141,9 @@ app.post("/api/webhooks/dial", async (req, res) => {
   }
   res.status(200).json({ received: true });
 });
+
+// --- Switchboard operator dashboard (docs/step-3-operator-dashboard-spec.md) --
+app.use(createDashboardRouter());
 
 // --- Plain HTTP health (for humans/uptime checks; MCP has a health tool) --
 app.get("/health", (_req, res) => {

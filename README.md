@@ -79,6 +79,22 @@ pnpm probe -- --yes -n 2 +9725XXXXXXXX   # then -n 5, then -n 10
 | `ANTHROPIC_API_KEY` | optional | server-side transcript extraction for surveys (`EXTRACT_MODEL` to override the model) |
 | `DATABASE_URL` | for surveys on serverless | Postgres (e.g. Neon via Vercel Marketplace); without it state is per-instance JSON |
 | `MAX_SURVEY_PARALLEL` | no | calls per survey wave, server-clamped 1-5, default 3 |
+| `DASHBOARD_TOKEN` | for the dashboard in prod | >= 16 chars; gates `/api/dashboard/*` (Bearer). Unset: localhost-only |
+
+## Switchboard (operator dashboard)
+
+`/dashboard` — calls with transcripts, surveys with per-candidate findings,
+reservations, do-not-call list, rate caps, Dial usage. Spec:
+[docs/step-3-operator-dashboard-spec.md](docs/step-3-operator-dashboard-spec.md).
+
+- Locally: `pnpm dev`, open `http://localhost:3000/dashboard` (no token needed on
+  localhost). In production set `DASHBOARD_TOKEN` (the page prompts once); without it
+  the API refuses with 503 — responses carry full numbers and transcripts.
+- **demo** toggle (header): server-side masking of numbers and the customer's name,
+  including inside transcripts — for screen recording.
+- **live drive** toggle (running survey page): advances the survey on every 5s
+  refresh, same as a `get_survey_status` poll. It can fire the next wave of real
+  calls — that's the point; off by default.
 
 ## Deploy
 
