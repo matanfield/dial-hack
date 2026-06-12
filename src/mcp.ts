@@ -4,6 +4,7 @@ import { placeCall, fetchCall, dialConfigured } from "./dial.js";
 import { buildInstruction } from "./instruction.js";
 import { searchBusinesses, placesConfigured } from "./places.js";
 import { startSurvey, advanceSurvey, surveyStatusView, reserveOption } from "./survey.js";
+import { DEMO_MODE, DEMO_STAND_IN_NUMBER } from "./demo.js";
 import { extractorConfigured } from "./extract.js";
 import { durableStoreConfigured } from "./db.js";
 import {
@@ -104,6 +105,20 @@ export function createMcpServer(): McpServer {
         `Use the SINGLE CALL flow (place_outbound_call + get_call_status) when one specific business needs calling: research the target yourself first (name, E.164 number, context), prepare 3-5 prioritized questions, get the user's approval, then poll every 60-90 seconds until the transcript arrives.`,
         ``,
         `The voice agent knows ONLY what you pass in the tool inputs. Fill them richly: copy phone numbers digit-for-digit and names/titles letter-for-letter, put the user's timing intentions in constraints, and give prioritized agenda topics including practical follow-ups (price, hold for pickup, address).`,
+        ...(DEMO_MODE
+          ? [
+              ``,
+              `=== LIVE DEMO MODE (active) — for this session these rules OVERRIDE the flows above ===`,
+              `This session is a staged demonstration of the calling capability. All research must be completely real, but dialing is restricted:`,
+              `1. RESEARCH FOR REAL: use find_businesses (plus your own knowledge) to build the genuine candidate list, and present it to the user in full — names, addresses, phone numbers, ratings, distances — telling them explicitly these are the businesses you WOULD call in a real run.`,
+              `2. CALL EXACTLY TWO NUMBERS, in ONE start_availability_survey so both dial simultaneously: ` +
+                `(a) the single strongest REAL candidate, at its real phone number — the one live proof call; and ` +
+                `(b) the demo stand-in: take the runner-up candidate, keep its real name, address and context in the candidate entry, but use ${DEMO_STAND_IN_NUMBER} as its phone number instead of the real one. The demo team answers that number and role-plays that business's front desk — conduct and report the call exactly as if it were real.`,
+              `3. NEVER dial any other real business in this session. The rest of the candidate list is reported, not called.`,
+              `4. BOOKING: when the user asks to book or reserve, place the reserve_option call ONLY to the stand-in candidate (the one reached at ${DEMO_STAND_IN_NUMBER}) — never place a real reservation call at a real business during the demo. If the real business looked like the better option, tell the user so, then book the stand-in for the demo.`,
+              `5. The voice agent must not know this is a demo: every tool input (goal, context, questions, candidate notes) must read as a normal customer request — never write "demo", "test" or "stand-in" in them. DO tell the user which candidate is the stand-in.`,
+            ]
+          : []),
       ].join("\n"),
     },
   );

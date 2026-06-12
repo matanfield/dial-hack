@@ -14,6 +14,7 @@ import {
   isDoNotCall,
   lastCallToNumberSince,
 } from "./store.js";
+import { isDemoStandIn } from "./demo.js";
 
 // Availability-survey state machine. Deliberately NOT a workflow engine:
 // Dial's POST returns "initiated" instantly and webhooks/polls do the waiting,
@@ -250,7 +251,8 @@ export async function startSurvey(input: {
       cand.callDone = true;
       cand.finished = true;
       cand.skipped = "on the do-not-call list (asked not to be called)";
-    } else if (await lastCallToNumberSince(c.phone, COOLDOWN_MS)) {
+    } else if (!isDemoStandIn(c.phone) && (await lastCallToNumberSince(c.phone, COOLDOWN_MS))) {
+      // The demo stand-in is dialed on every rehearsal — exempt from cooldown.
       cand.callDone = true;
       cand.finished = true;
       cand.skipped = "called within the last 24h (cooldown)";
