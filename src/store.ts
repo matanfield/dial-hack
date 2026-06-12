@@ -70,6 +70,10 @@ export async function listCalls(limit = 20): Promise<CallRecord[]> {
   return (await db().list(CALLS, limit)) as CallRecord[];
 }
 
+export async function resetCallHistory(): Promise<number> {
+  return db().clear(CALLS);
+}
+
 export async function countCallsSince(ms: number): Promise<number> {
   const cutoff = Date.now() - ms;
   const recent = (await db().list(CALLS, 500)) as CallRecord[];

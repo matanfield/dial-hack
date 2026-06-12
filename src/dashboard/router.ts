@@ -9,6 +9,7 @@ import {
   listCalls,
   getCall,
   updateCall,
+  resetCallHistory,
   countCallsSince,
   redactPhones,
   type CallRecord,
@@ -224,6 +225,14 @@ export function createDashboardRouter(): express.Router {
       const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 200);
       const calls = await listCalls(limit);
       res.json({ calls: calls.map((c) => callView(c, isDemo(req))) });
+    }),
+  );
+
+  api.post(
+    "/calls/reset",
+    wrap(async (_req, res) => {
+      const deleted = await resetCallHistory();
+      res.json({ ok: true, deleted });
     }),
   );
 

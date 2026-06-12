@@ -579,6 +579,7 @@ function render() {
 }
 
 const demoBtn = document.getElementById("demo-toggle");
+const resetCallsBtn = document.getElementById("reset-calls");
 function paintDemo() {
   demoBtn.textContent = `demo: ${demo ? "on" : "off"}`;
   demoBtn.classList.toggle("on", demo);
@@ -590,6 +591,23 @@ demoBtn.addEventListener("click", () => {
   render();
 });
 paintDemo();
+
+resetCallsBtn.addEventListener("click", async () => {
+  if (!confirm("Reset call history? This clears stored calls, transcripts, and dashboard call counters. Surveys, reservations, and do-not-call entries stay intact.")) {
+    return;
+  }
+  resetCallsBtn.disabled = true;
+  resetCallsBtn.textContent = "resetting";
+  const res = await api("/calls/reset", { method: "POST" });
+  resetCallsBtn.disabled = false;
+  resetCallsBtn.textContent = "reset calls";
+  if (!res.ok) {
+    renderNotice(res.data.error || `reset failed (${res.status})`, true);
+    return;
+  }
+  renderNotice(`call history reset (${res.data.deleted ?? 0} removed)`, false);
+  setTimeout(render, 800);
+});
 
 window.addEventListener("hashchange", render);
 render();

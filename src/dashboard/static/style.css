@@ -102,6 +102,9 @@ a:hover { text-decoration: underline; }
 
 .pill:hover { border-color: var(--amber-dim); color: var(--text); }
 .pill.on { color: var(--amber); border-color: var(--amber-dim); }
+.pill.danger { color: var(--red); border-color: #4a2730; }
+.pill.danger:hover { border-color: var(--red); color: #f0b7c1; }
+.pill:disabled { cursor: wait; opacity: 0.55; }
 
 /* --- Layout ------------------------------------------------------------ */
 

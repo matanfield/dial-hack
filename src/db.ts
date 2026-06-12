@@ -20,6 +20,7 @@ interface Backend {
   /** Atomic insert; returns false if the id already exists. Used for webhook dedupe. */
   insertIfAbsent(table: string, id: string, doc: Doc): Promise<boolean>;
   list(table: string, limit: number): Promise<Doc[]>;
+  clear(table: string): Promise<number>;
 }
 
 // --- Postgres backend ------------------------------------------------------
@@ -85,6 +86,11 @@ function createPgBackend(connectionString: string): Backend {
       );
       return res.rows.map((r) => r.doc as Doc);
     },
+    async clear(table) {
+      await ensureSchema();
+      const res = await pool.query("DELETE FROM docs WHERE tbl = $1", [table]);
+      return res.rowCount ?? 0;
+    },
   };
 }
 
@@ -144,6 +150,13 @@ function createFileBackend(): Backend {
       return Object.values(load(table))
         .sort((a, b) => createdAt(b).localeCompare(createdAt(a)))
         .slice(0, limit);
+    },
+    async clear(table) {
+      const docs = load(table);
+      const count = Object.keys(docs).length;
+      cache[table] = {};
+      persist(table);
+      return count;
     },
   };
 }
