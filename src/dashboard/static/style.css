@@ -418,24 +418,6 @@ ol.questions li { font-size: 13.5px; color: var(--dim); padding: 3px 0; }
 
 .reservation { border-color: var(--amber-dim); }
 
-/* --- Token gate ------------------------------------------------------------------------ */
-
-.gate { max-width: 420px; margin: 60px auto; text-align: center; }
-.gate h2 { font-style: italic; font-weight: 500; margin: 0 0 8px; }
-.gate p { font-family: var(--mono); font-size: 11px; color: var(--faint); margin: 0 0 18px; }
-.gate input {
-  width: 100%;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 12px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-}
-.gate input:focus { outline: none; border-color: var(--amber-dim); }
-
 @media (max-width: 760px) {
   .masthead { flex-wrap: wrap; gap: 12px; padding: 18px 18px 12px; }
   .controls { margin-left: 0; }

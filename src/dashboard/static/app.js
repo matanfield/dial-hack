@@ -8,7 +8,6 @@ const view = document.getElementById("view");
 
 // --- State -------------------------------------------------------------------
 
-let token = localStorage.getItem("switchboard_token") || "";
 let demo = localStorage.getItem("switchboard_demo") === "1";
 // Live drive is per-survey and deliberately in-memory: a reload always comes
 // back with it OFF (advancing can fire real calls).
@@ -21,7 +20,6 @@ async function api(path, opts = {}) {
   const url = new URL(`/api/dashboard${path}`, location.origin);
   if (demo) url.searchParams.set("demo", "1");
   const headers = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   let res;
   try {
     res = await fetch(url, { ...opts, headers });
@@ -153,31 +151,7 @@ function schedulePoll(ms, fn) {
   pollTimer = setTimeout(fn, ms);
 }
 
-// --- Gate / error views ---------------------------------------------------------------
-
-function renderGate(message) {
-  clearTimeout(pollTimer);
-  view.replaceChildren();
-  const g = el("div", "gate");
-  g.appendChild(el("h2", null, "Operator access"));
-  g.appendChild(el("p", null, message || "this console shows full numbers and transcripts — present the dashboard token"));
-  const input = el("input");
-  input.type = "password";
-  input.placeholder = "DASHBOARD_TOKEN";
-  input.value = token;
-  const btn = el("button", "pill", "enter");
-  btn.addEventListener("click", () => {
-    token = input.value.trim();
-    localStorage.setItem("switchboard_token", token);
-    render();
-  });
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") btn.click();
-  });
-  append(g, input, btn);
-  view.appendChild(g);
-  input.focus();
-}
+// --- Error views ----------------------------------------------------------------------
 
 function renderNotice(text, isError) {
   view.replaceChildren(el("div", `notice${isError ? " error" : ""}`, text));
@@ -185,8 +159,7 @@ function renderNotice(text, isError) {
 
 function guard(res) {
   if (res.ok) return false;
-  if (res.status === 401) renderGate(token ? "that token was not accepted" : undefined);
-  else renderNotice(res.data.error || `request failed (${res.status})`, true);
+  renderNotice(res.data.error || `request failed (${res.status})`, true);
   return true;
 }
 
@@ -617,8 +590,6 @@ demoBtn.addEventListener("click", () => {
   render();
 });
 paintDemo();
-
-document.getElementById("token-btn").addEventListener("click", () => renderGate("present the dashboard token"));
 
 window.addEventListener("hashchange", render);
 render();

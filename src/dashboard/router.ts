@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,8 +30,9 @@ import {
 
 // Switchboard — the operator dashboard (docs/step-3-operator-dashboard-spec.md).
 // Read-mostly observer over the call/survey store; the one write is
-// POST /surveys/:id/advance. Gated by DASHBOARD_TOKEN because responses carry
-// full phone numbers, transcripts and reservation details.
+// POST /surveys/:id/advance. This dashboard is intentionally ungated for the
+// hackathon demo and may return full phone numbers, transcripts and reservation
+// details.
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -42,47 +42,7 @@ const MAX_CALLS_PER_DAY = Number(process.env.MAX_CALLS_PER_DAY ?? 20);
 // Dial calls run minutes, not hours: a non-terminal record older than this is a
 // stale row (missed webhook, never polled), not a live call.
 const IN_FLIGHT_WINDOW_MS = 15 * 60 * 1000;
-const MIN_TOKEN_LENGTH = 16;
 const USAGE_CACHE_TTL_MS = 60 * 1000;
-
-// --- Access control ----------------------------------------------------------
-
-// Hash both sides so timingSafeEqual gets equal-length buffers regardless of
-// what the client sent.
-function tokenMatches(presented: string, expected: string): boolean {
-  const a = crypto.createHash("sha256").update(presented).digest();
-  const b = crypto.createHash("sha256").update(expected).digest();
-  return crypto.timingSafeEqual(a, b);
-}
-
-function requireOperator(req: express.Request, res: express.Response, next: express.NextFunction): void {
-  const configured = process.env.DASHBOARD_TOKEN ?? "";
-  if (configured.length >= MIN_TOKEN_LENGTH) {
-    const header = req.header("authorization") ?? "";
-    const presented = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
-    if (presented && tokenMatches(presented, configured)) {
-      next();
-      return;
-    }
-    res.status(401).json({ error: "missing or invalid dashboard token" });
-    return;
-  }
-  // No usable token configured: default-deny everywhere except a local dev box.
-  // A configured-but-short token is treated as unset (a blank env var must not
-  // pass the gate), and the error says why.
-  const ip = req.socket.remoteAddress ?? "";
-  const isLocalhost = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
-  if (!process.env.VERCEL && isLocalhost) {
-    next();
-    return;
-  }
-  res.status(503).json({
-    error:
-      configured.length > 0
-        ? `dashboard token too short: DASHBOARD_TOKEN needs >= ${MIN_TOKEN_LENGTH} chars`
-        : "dashboard not configured: set DASHBOARD_TOKEN",
-  });
-}
 
 // --- Demo masking (server-side) ----------------------------------------------
 // ?demo=1 masks responses for screen recording: numbers via redactPhones /
@@ -216,7 +176,6 @@ function wrap(handler: (req: express.Request, res: express.Response) => Promise<
 export function createDashboardRouter(): express.Router {
   const router = express.Router();
   const api = express.Router();
-  api.use(requireOperator);
 
   api.get(
     "/overview",

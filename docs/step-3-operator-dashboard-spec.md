@@ -83,8 +83,7 @@ changes.
 - **Read-mostly.** The dashboard observes; MCP clients act. Writes are limited to
   `POST .../advance` (below). Honest framing: wave advancement is *already* reachable
   unauthenticated via `get_survey_status` on `/mcp` by anyone holding a survey_id —
-  the dashboard token primarily gates **read access to first-party PII**, which is
-  the genuinely new exposure.
+  the dashboard primarily exposes first-party PII reads.
 - **Vanilla front-end, Night Desk aesthetic** (near-black, serif italic headings,
   mono caps labels, amber accents) — using a **system font stack, no third-party
   assets** (a Google Fonts request would leak URLs via Referer and break the CSP).
@@ -113,21 +112,11 @@ written by `advanceSurvey()`/`get_call_status`. So:
   until the end. Overview polls the store every 10s.
 - No SSE/websockets on serverless; polling is enough at this volume.
 
-## Access control (minimal, not "auth")
+## Access control
 
-The store holds full phone numbers, transcripts, and reservation details (customer
-names). The Vercel deployment is public. So:
-
-- `DASHBOARD_TOKEN` env var, required as `Authorization: Bearer` on every
-  `/api/dashboard/*` request. **No `?token=` query form** — query strings land in
-  Vercel request logs, browser history, and Referer headers. The page prompts once
-  and keeps the token in localStorage. Constant-time comparison; reject
-  empty/short (<16 chars) configured tokens so a blank env var can't pass.
-- **Default-deny:** when `DASHBOARD_TOKEN` is unset, the API serves only when
-  `process.env.VERCEL` is unset AND the request originates from localhost; anything
-  else gets 503 "set DASHBOARD_TOKEN". (Spelling matters: `VERCEL`, all caps — a
-  typo here fails open.)
-- Behind the token the operator sees **full, unmasked data** (it's our own call log).
+Removed 2026-06-12 for the hackathon demo: `/dashboard` and `/api/dashboard/*`
+are open in production and may show full phone numbers, transcripts, and
+reservation details. Use demo mode for screen recording.
 - **Demo mode is server-side** (`?demo=1` on API requests, toggled in the UI):
   responses substitute masked numbers, pass all free text (goals, transcripts,
   findings, reservation details) through the existing `redactPhones`, and
@@ -189,7 +178,7 @@ Full scope is realistically 1.5–2 focused days of vanilla-JS work.
 ## Acceptance before recording day
 
 - Dashboard page and assets load on a **preview deploy** (bundle-inclusion risk).
-- Unauthenticated request to `/api/dashboard/*` on the deployed app returns 401/503.
+- Unauthenticated request to `/api/dashboard/*` on the deployed app returns data.
 - A live survey driven only by Live drive (no chat client) visibly progresses.
 - Demo mode: no full phone number or the customer's name anywhere on screen,
   including inside transcripts.
